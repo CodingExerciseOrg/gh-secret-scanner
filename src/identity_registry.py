@@ -6,15 +6,29 @@ Each identity hash gets its own:
   - Poller   → background daemon thread
   - Scanner  → built from the identity's config
 
-Instances are created lazily on first access and stopped on shutdown.
+Idle poller reaping:
+  Any identity whose poller has not been accessed within IDLE_TIMEOUT_SECONDS
+  is considered abandoned. A background reaper thread checks every
+  REAPER_INTERVAL_SECONDS and stops+removes idle pollers to avoid
+  accumulating stale threads from browsers that have moved on.
+
+  The status endpoint (polled every 3 s by active browsers) calls
+  touch_identity() on every request, so any open browser tab keeps
+  its poller alive automatically.
 """
 
 import threading
+import time
 from pathlib import Path
 
 from storage import Storage
 from scanner import Scanner
 from poller  import Poller
+
+# A poller is considered idle if not accessed for 2 × the poll interval.
+# Default poll interval is 30 min, so idle timeout is 60 min.
+IDLE_TIMEOUT_SECONDS  = 60 * 60   # 1 hour
+REAPER_INTERVAL_SECONDS = 5 * 60  # check every 5 minutes
 
 
 class IdentityRegistry:
@@ -29,6 +43,11 @@ class IdentityRegistry:
         self._lock              = threading.RLock()
         self._storages: dict[str, Storage] = {}
         self._pollers:  dict[str, Poller]  = {}
+        self._last_seen: dict[str, float]  = {}   # identity → last access timestamp
+
+        # Start background reaper
+        self._reaper = threading.Thread(target=self._reap_loop, daemon=True, name="PollerReaper")
+        self._reaper.start()
 
     # ------------------------------------------------------------------
     # Public API
@@ -56,6 +75,11 @@ class IdentityRegistry:
                 self._pollers[identity] = poller
             return self._pollers[identity]
 
+    def touch_identity(self, identity: str) -> None:
+        """Record that this identity was just accessed. Resets its idle timer."""
+        with self._lock:
+            self._last_seen[identity] = time.monotonic()
+
     def rebuild_scanner(self, identity: str) -> None:
         """Rebuild scanner from current config and push to the poller."""
         with self._lock:
@@ -75,3 +99,31 @@ class IdentityRegistry:
             for poller in self._pollers.values():
                 poller.join(timeout=10)
             self._pollers.clear()
+
+    # ------------------------------------------------------------------
+    # Idle reaper
+    # ------------------------------------------------------------------
+
+    def _reap_loop(self) -> None:
+        """Background thread: stop pollers that have been idle too long."""
+        while True:
+            time.sleep(REAPER_INTERVAL_SECONDS)
+            self._reap_idle()
+
+    def _reap_idle(self) -> None:
+        now = time.monotonic()
+        to_stop: list[str] = []
+
+        with self._lock:
+            for ident, poller in self._pollers.items():
+                last = self._last_seen.get(ident, 0)
+                if now - last > IDLE_TIMEOUT_SECONDS:
+                    to_stop.append(ident)
+
+        for ident in to_stop:
+            print(f"[registry] stopping idle poller for identity {ident[:8]}…")
+            with self._lock:
+                poller = self._pollers.pop(ident, None)
+            if poller:
+                poller.stop()
+                poller.join(timeout=10)
