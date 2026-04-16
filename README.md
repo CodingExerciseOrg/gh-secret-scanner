@@ -307,4 +307,6 @@ For the current exercise/demo scope, this behavior is an intentional tradeoff an
 
 ### 3. Other limitations
 
-See https://github.com/CodingExerciseOrg/gh-secret-scanner/blob/main/docs/GitHub%20Actions%20Secret%20Scanner%20Architecture%20and%20Documentation.md
+Full list of limitations, architecture and developer documentation:
+[Architecture & Developer Docs](https://github.com/CodingExerciseOrg/gh-secret-scanner/blob/main/docs/GitHub%20Actions%20Secret%20Scanner%20Architecture%20and%20Documentation.md)
+
