@@ -304,3 +304,7 @@ Impact:
 - this may generate some extra background API calls and thread usage during that window
 
 For the current exercise/demo scope, this behavior is an intentional tradeoff and is acceptable.
+
+### 3. Other limitations
+
+See https://github.com/CodingExerciseOrg/gh-secret-scanner/blob/main/docs/GitHub%20Actions%20Secret%20Scanner%20Architecture%20and%20Documentation.md
