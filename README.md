@@ -122,7 +122,7 @@ FastAPI auto-generates interactive API documentation at:
 4. Use the **Repositories tab** to see discovered repos.
 5. Use the **Findings tab** to see secrets found, grouped by repo and workflow run.
 
-The status bar shows the poller status and countdown to the next automatic scan (every 30 minutes by default, configurable in `src/poller.py`).
+The status bar shows the poller status and countdown to the next automatic scan (every 30 minutes by default, the value is set in `src/poller.py`).
 
 ---
 
