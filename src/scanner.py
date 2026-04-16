@@ -125,6 +125,11 @@ class Scanner:
             default_path = Path(__file__).resolve().parent.parent / "secret_scanner" / "secret_scanner.py"
             self._binary_path = default_path
 
+        # If the path is relative, resolve it from the project root (src/..)
+        # so it works correctly regardless of working directory
+        if not self._binary_path.is_absolute():
+            self._binary_path = (Path(__file__).resolve().parent.parent / self._binary_path).resolve()
+
         if not self._binary_path.exists():
             raise ScannerError(f"Scanner path does not exist: {self._binary_path}")
 
