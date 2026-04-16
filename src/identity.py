@@ -59,25 +59,28 @@ def init(config_dir: Path) -> None:
 
 def credential_hash(config: dict) -> str:
     """
-    Derive a short, stable, opaque identifier from the user's credential.
-
-    For token auth  : hash of the token string.
-    For app auth    : hash of app_id + installation_id + private_key.
-
+    Derive a short, stable, opaque identifier from the user's credential
+    and organization. Including the org means the same credential used
+    against different organizations produces different data folders,
+    allowing one user to manage multiple organizations independently.
+ 
+    For token auth  : hash of org + token.
+    For app auth    : hash of org + app_id + installation_id + private_key.
+ 
     Returns the first 16 hex characters of the SHA-256 digest.
-    This is enough to make collisions astronomically unlikely while
-    keeping folder names short and filesystem-friendly.
     """
+    org    = config.get("org", "").strip().lower()
     method = config.get("auth_method", "token")
     if method == "app":
         raw = (
-            config.get("app_id", "")
+            org
+            + "|" + config.get("app_id", "")
             + "|" + config.get("installation_id", "")
             + "|" + config.get("private_key", "")
         )
     else:
-        raw = config.get("token", "")
-
+        raw = org + "|" + config.get("token", "")
+ 
     return hashlib.sha256(raw.encode()).hexdigest()[:16]
 
 
