@@ -182,10 +182,9 @@ Description=GitHub Actions Secret Scanner
 After=network.target
 
 [Service]
-
-WorkingDirectory=/opt/gh-secret-scanner-web
 User=gh-scanner
 Group=gh-scanner
+WorkingDirectory=/opt/gh-secret-scanner-web
 ExecStart=/usr/bin/python3 /opt/gh-secret-scanner-web/run.py
 Restart=always
 RestartSec=5
@@ -307,9 +306,3 @@ Impact:
 - this may generate some extra background API calls and thread usage during that window
 
 For the current exercise/demo scope, this behavior is an intentional tradeoff and is acceptable.
-
-### 3. Other limitations
-
-Full list of limitations, architecture and developer documentation:
-[Architecture & Developer Docs](https://github.com/CodingExerciseOrg/gh-secret-scanner/blob/main/docs/GitHub%20Actions%20Secret%20Scanner%20Architecture%20and%20Documentation.md)
-
