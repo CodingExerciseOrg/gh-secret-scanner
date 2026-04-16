@@ -73,6 +73,7 @@ class IdentityRegistry:
                 )
                 poller.start()
                 self._pollers[identity] = poller
+                self._last_seen[identity] = time.monotonic()  # start the idle clock from creation
             return self._pollers[identity]
 
     def touch_identity(self, identity: str) -> None:
