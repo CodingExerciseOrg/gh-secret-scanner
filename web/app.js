@@ -411,6 +411,7 @@ function esc(str) {
 
 async function apiFetch(url, options = {}) {
   const res = await fetch(url, {
+    credentials: "include",
     headers: { "Content-Type": "application/json", ...options.headers },
     ...options,
   });
