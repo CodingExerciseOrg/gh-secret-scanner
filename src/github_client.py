@@ -1,207 +1,439 @@
-"""
-src/github_client.py — Thin wrapper around the GitHub REST API.
+/* ------------------------------------------------------------------ */
+/* app.js — GitHub Actions Secret Scanner frontend                     */
+/* ------------------------------------------------------------------ */
 
-Supports two authentication methods:
-  - Token auth  : a classic PAT or fine-grained token with repo / actions:read scopes.
-  - App auth    : a GitHub App installation token generated from App ID, Installation ID
-                  and a private key (.pem). The token is valid for 1 hour; callers should
-                  refresh it by calling GitHubClient.from_app() again before expiry.
-"""
+"use strict";
 
-import io
-import re
-import time
-import zipfile
-from pathlib import Path
+// ------------------------------------------------------------------
+// Tab switching
+// ------------------------------------------------------------------
 
-import requests
+document.querySelectorAll(".tab-btn").forEach(btn => {
+  btn.addEventListener("click", () => {
+    document.querySelectorAll(".tab-btn").forEach(b => b.classList.remove("active"));
+    document.querySelectorAll(".panel").forEach(p => p.classList.remove("active"));
+    btn.classList.add("active");
+    document.getElementById(`panel-${btn.dataset.tab}`).classList.add("active");
 
-API = "https://api.github.com"
-BASE_HEADERS = {
-    "Accept":               "application/vnd.github+json",
-    "X-GitHub-Api-Version": "2022-11-28",
+    if (btn.dataset.tab === "repos")    loadRepos();
+    if (btn.dataset.tab === "findings") loadFindings();
+  });
+});
+
+// ------------------------------------------------------------------
+// Setup tab — auth method toggle
+// ------------------------------------------------------------------
+
+document.querySelectorAll("input[name='auth_method']").forEach(r => {
+  r.addEventListener("change", () => {
+    toggleAuthFields();
+    // Clear any leftover save feedback when the user switches auth method
+    setFeedback(document.getElementById("setup-feedback"), "", "");
+  });
+});
+
+function toggleAuthFields() {
+  const method = document.querySelector("input[name='auth_method']:checked").value;
+  document.getElementById("row-token").style.display   = method === "token" ? "" : "none";
+  document.getElementById("section-app").style.display = method === "app"   ? "" : "none";
+
+  // When switching to app auth, reset sensitive fields to empty so the user
+  // knows they must fill them in — never carry over a "saved" placeholder
+  // from a previous token-auth session.
+  if (method === "app") {
+    const pk = document.getElementById("private-key");
+    if (!pk.value) pk.placeholder = "";
+  }
+
+  // When switching to token auth, reset the token field placeholder too
+  if (method === "token") {
+    const tk = document.getElementById("token");
+    if (!tk.value) tk.placeholder = "ghp_…";
+  }
 }
 
+// ------------------------------------------------------------------
+// Setup tab — scanner mode toggle
+// ------------------------------------------------------------------
 
-class GitHubError(Exception):
-    pass
+document.getElementById("scanner-mode").addEventListener("change", toggleScannerPath);
 
+function toggleScannerPath() {
+  const mode = document.getElementById("scanner-mode").value;
+  const show = mode === "test";
+  document.getElementById("row-scanner-path").style.display  = show ? "" : "none";
+  document.getElementById("note-scanner-path").style.display = show ? "" : "none";
+}
 
-class GitHubClient:
-    """
-    Authenticated GitHub REST API client.
-    Handles pagination transparently on list operations.
-    """
+// ------------------------------------------------------------------
+// Setup tab — load existing config on page load
+// ------------------------------------------------------------------
 
-    def __init__(self, token: str):
-        if not token:
-            raise GitHubError("No authentication token provided.")
-        self._session = requests.Session()
-        self._session.headers.update({
-            **BASE_HEADERS,
-            "Authorization": f"Bearer {token}",
-        })
+async function loadConfig() {
+  try {
+    const cfg = await apiFetch("/api/config");
+    document.getElementById("org").value = cfg.org || "";
+    document.querySelector(`input[name='auth_method'][value='${cfg.auth_method || "token"}']`).checked = true;
+    document.getElementById("scanner-mode").value = cfg.scanner_mode || "mock";
+    document.getElementById("scanner-path").value = cfg.scanner_path || "";
 
-    # ------------------------------------------------------------------
-    # GitHub App factory
-    # ------------------------------------------------------------------
+    // Token auth
+    if (cfg.token_set && cfg.auth_method === "token") {
+      document.getElementById("token").placeholder = "••••••••  (token saved)";
+    }
 
-    @classmethod
-    def from_app(cls, app_id: str, installation_id: str, private_key: str) -> "GitHubClient":
-        """
-        Authenticate as a GitHub App installation.
+    // App auth — restore non-secret fields
+    if (cfg.auth_method === "app") {
+      document.getElementById("app-id").value          = cfg.app_id || "";
+      document.getElementById("installation-id").value = cfg.installation_id || "";
+      if (cfg.private_key_set) {
+        document.getElementById("private-key").placeholder = "(private key saved)";
+      }
+    }
 
-        Steps:
-          1. Sign a JWT with the App's private key (valid 9 minutes).
-          2. Exchange the JWT for an installation access token (valid 1 hour).
-          3. Return a (GitHubClient, token) tuple so callers can persist the token.
+    toggleAuthFields();
+    toggleScannerPath();
+  } catch (_) { /* first launch — no config yet */ }
+}
 
-        Parameters:
-            app_id          : GitHub App's numeric ID (string).
-            installation_id : Installation ID for the target org.
-            private_key     : PEM-encoded RSA private key as a string,
-                              or a path to a .pem file.
-        """
-        try:
-            import jwt as pyjwt
-        except ImportError:
-            raise GitHubError(
-                "PyJWT is required for GitHub App auth. "
-                "Run: pip install PyJWT cryptography"
-            )
+// ------------------------------------------------------------------
+// Setup tab — save config
+// ------------------------------------------------------------------
 
-        # Accept either a PEM string or a file path
-        pem = private_key.strip()
-        if not pem.startswith("-----"):
-            # Treat as a file path
-            pem_path = Path(pem)
-            if not pem_path.exists():
-                raise GitHubError(f"Private key file not found: {pem_path}")
-            pem = pem_path.read_text(encoding="utf-8").strip()
+document.getElementById("btn-save").addEventListener("click", saveConfig);
 
-        # Step 1: Generate JWT
-        now = int(time.time())
-        payload = {
-            "iat": now - 60,       # issued slightly in the past to allow clock skew
-            "exp": now + 540,      # 9 minutes (GitHub max is 10)
-            "iss": str(app_id),
-        }
-        try:
-            jwt_token = pyjwt.encode(payload, pem, algorithm="RS256")
-        except Exception as e:
-            raise GitHubError(f"Failed to sign JWT: {e}")
+async function saveConfig() {
+  const feedback = document.getElementById("setup-feedback");
+  const btn      = document.getElementById("btn-save");
+  const method   = document.querySelector("input[name='auth_method']:checked").value;
 
-        # Step 2: Exchange JWT for installation access token
-        url = f"{API}/app/installations/{installation_id}/access_tokens"
-        r = requests.post(
-            url,
-            headers={**BASE_HEADERS, "Authorization": f"Bearer {jwt_token}"},
-        )
-        if not r.ok:
-            try:
-                msg = r.json().get("message", r.text[:200])
-            except Exception:
-                msg = r.text[:200]
-            raise GitHubError(f"GitHub App token exchange failed ({r.status_code}): {msg}")
+  setFeedback(feedback, "", "");
+  btn.disabled = true;
 
-        token = r.json().get("token", "")
-        if not token:
-            raise GitHubError("GitHub App token exchange returned no token.")
+  const body = {
+    org:                document.getElementById("org").value.trim(),
+    auth_method:        method,
+    scanner_mode:       document.getElementById("scanner-mode").value,
+    scanner_path:       document.getElementById("scanner-path").value.trim(),
+  };
 
-        # Return both the client and the raw token so callers can persist it
-        return cls(token=token), token
+  if (method === "token") {
+    body.token = document.getElementById("token").value.trim();
+  } else {
+    body.app_id          = document.getElementById("app-id").value.trim();
+    body.installation_id = document.getElementById("installation-id").value.trim();
+    body.private_key     = document.getElementById("private-key").value.trim();
+  }
 
-    # ------------------------------------------------------------------
-    # Repositories
-    # ------------------------------------------------------------------
+  try {
+    await apiFetch("/api/config", { method: "POST", body: JSON.stringify(body) });
+    setFeedback(feedback, "✅ Config saved — scan triggered.", "ok");
 
-    def list_repos(self, org: str) -> list[dict]:
-        """Return all repos visible to the token for an org."""
-        repos = []
-        url = f"{API}/orgs/{org}/repos"
-        params = {"per_page": 100, "type": "all"}
-        while url:
-            r = self._get(url, params=params)
-            repos.extend(r.json())
-            url = r.links.get("next", {}).get("url")
-            params = {}
-        return repos
+    // Clear sensitive fields and replace with masked placeholders
+    if (method === "token") {
+      document.getElementById("token").value       = "";
+      document.getElementById("token").placeholder = "••••••••  (token saved)";
+    } else {
+      document.getElementById("private-key").value       = "";
+      document.getElementById("private-key").placeholder = "(private key saved)";
+    }
+  } catch (err) {
+    setFeedback(feedback, `❌ ${err.message}`, "error");
+  } finally {
+    btn.disabled = false;
+  }
+}
 
-    # ------------------------------------------------------------------
-    # Workflow runs
-    # ------------------------------------------------------------------
+// ------------------------------------------------------------------
+// Repositories tab
+// ------------------------------------------------------------------
 
-    def list_recent_runs(self, org: str, repo: str, limit: int = 10) -> list[dict]:
-        """Return the most recent workflow runs for a repository."""
-        url = f"{API}/repos/{org}/{repo}/actions/runs"
-        r = self._get(url, params={"per_page": limit})
-        return r.json().get("workflow_runs", [])
+document.getElementById("btn-refresh-repos").addEventListener("click", loadRepos);
 
-    # ------------------------------------------------------------------
-    # Logs
-    # ------------------------------------------------------------------
+let _reposData   = [];
+let _repoSortCol = "name";
+let _repoSortAsc = true;
 
-    def download_logs(self, org: str, repo: str, run_id: int) -> str:
-        """
-        Download the log archive for a run and return its contents as a
-        single concatenated string, one section per job/step.
+async function loadRepos() {
+  const status = document.getElementById("repos-status");
+  const btn    = document.getElementById("btn-refresh-repos");
+  status.innerHTML = '<span class="spinner"></span> Loading…';
+  btn.disabled = true;
 
-        Returns an empty string if logs have expired or the run is still
-        in progress.
-        """
-        url = f"{API}/repos/{org}/{repo}/actions/runs/{run_id}/logs"
-        r = self._session.get(url, allow_redirects=True)
+  try {
+    _reposData = await apiFetch("/api/repos");
+    renderRepos();
+    status.textContent = "";
+  } catch (err) {
+    status.textContent = `❌ ${err.message}`;
+  } finally {
+    btn.disabled = false;
+  }
+}
 
-        if r.status_code == 404:
-            return ""
+function renderRepos() {
+  const tbody = document.getElementById("repos-body");
+  const count = document.getElementById("repo-count");
 
-        self._raise_for_status(r)
+  if (!_reposData.length) {
+    tbody.innerHTML = `<tr><td colspan="5" class="empty-msg">No repositories found.</td></tr>`;
+    count.textContent = "";
+    return;
+  }
 
-        parts = []
-        with zipfile.ZipFile(io.BytesIO(r.content)) as zf:
-            all_names = sorted(zf.namelist())
-            print(f"[github_client] zip files: {all_names}")
+  const sorted = [..._reposData].sort((a, b) => {
+    const av = (a[_repoSortCol] || "").toString().toLowerCase();
+    const bv = (b[_repoSortCol] || "").toString().toLowerCase();
+    return _repoSortAsc ? av.localeCompare(bv) : bv.localeCompare(av);
+  });
 
-            sub_level = [n for n in all_names if n.endswith(".txt") and "/" in n]
-            top_level = [n for n in all_names if n.endswith(".txt") and "/" not in n]
+  tbody.innerHTML = sorted.map(r => `
+    <tr>
+      <td>${esc(r.name)}</td>
+      <td>${esc(r.visibility)}</td>
+      <td>${esc(r.language || "—")}</td>
+      <td>${esc(r.default_branch)}</td>
+      <td>${esc(r.updated_at)}</td>
+    </tr>
+  `).join("");
 
-            _INFRA_STEPS = re.compile(
-                r"^(Set up job|Complete job|Post\b|system)",
-                re.I
-            )
-            useful_sub = [
-                n for n in sub_level
-                if not _INFRA_STEPS.match(re.sub(r"^\d+_", "", n.split("/")[-1].replace(".txt", "")))
-            ]
-            selected = useful_sub if useful_sub else top_level
-            print(f"[github_client] using {'per-step' if useful_sub else 'merged'} files ({len(selected)} total)")
+  count.textContent = `${_reposData.length} repositories`;
 
-            for name in selected:
-                content = zf.read(name).decode("utf-8", errors="replace")
-                if "/" in name:
-                    base = name.split("/")[-1]
-                    base = re.sub(r"\.txt$", "", base)
-                    step = re.sub(r"^\d+_", "", base)
-                    parts.append(f"=== {step} ===\n{content}")
-                else:
-                    parts.append(content)
+  document.querySelectorAll("#repos-table thead th").forEach(th => {
+    th.classList.remove("sorted-asc", "sorted-desc");
+    if (th.dataset.col === _repoSortCol) {
+      th.classList.add(_repoSortAsc ? "sorted-asc" : "sorted-desc");
+    }
+  });
+}
 
-        return "\n".join(parts)
+// Column sorting
+document.querySelectorAll("#repos-table thead th").forEach(th => {
+  th.addEventListener("click", () => {
+    if (_repoSortCol === th.dataset.col) {
+      _repoSortAsc = !_repoSortAsc;
+    } else {
+      _repoSortCol = th.dataset.col;
+      _repoSortAsc = true;
+    }
+    renderRepos();
+  });
+});
 
-    # ------------------------------------------------------------------
-    # Internal helpers
-    # ------------------------------------------------------------------
+// ------------------------------------------------------------------
+// Findings tab
+// ------------------------------------------------------------------
 
-    def _get(self, url: str, **kwargs) -> requests.Response:
-        r = self._session.get(url, **kwargs)
-        self._raise_for_status(r)
-        return r
+document.getElementById("btn-refresh-findings").addEventListener("click", loadFindings);
+document.getElementById("btn-dismiss-findings").addEventListener("click", () => clearFindings("dismiss"));
+document.getElementById("btn-reset-findings").addEventListener("click",   () => clearFindings("reset"));
 
-    @staticmethod
-    def _raise_for_status(r: requests.Response) -> None:
-        if not r.ok:
-            try:
-                msg = r.json().get("message", r.text[:200])
-            except Exception:
-                msg = r.text[:200]
-            raise GitHubError(f"GitHub API {r.status_code}: {msg}")
+let _findingsData = [];
+let _findingsMap  = {};   // fid → finding object (avoids inline JSON in HTML)
+
+async function loadFindings() {
+  try {
+    _findingsData = await apiFetch("/api/findings");
+    renderFindings();
+  } catch (err) {
+    document.getElementById("findings-tree").innerHTML =
+      `<p class="empty-msg" style="color:var(--danger)">❌ ${esc(err.message)}</p>`;
+  }
+}
+
+async function clearFindings(mode = "dismiss") {
+  const msg = mode === "reset"
+    ? "Clear all findings and re-scan all runs from the beginning?"
+    : "Dismiss all findings? Already-scanned runs won't be re-scanned.";
+  if (!confirm(msg)) return;
+  try {
+    await apiFetch(`/api/findings?mode=${mode}`, { method: "DELETE" });
+    _findingsData = [];
+    _findingsMap  = {};
+    _lastFindingsCount = -1;  // force reload when findings come back
+    renderFindings();
+    document.getElementById("finding-detail").classList.remove("visible");
+  } catch (err) {
+    alert(`Failed to clear: ${err.message}`);
+  }
+}
+
+function renderFindings() {
+  const tree  = document.getElementById("findings-tree");
+  const count = document.getElementById("findings-count");
+  _findingsMap = {};
+  updateBadge(_findingsData.length);
+
+  if (!_findingsData.length) {
+    count.textContent = "";
+    tree.innerHTML = `<p class="empty-msg">No findings yet. Run a scan to populate this view.</p>`;
+    return;
+  }
+
+  count.textContent = `${_findingsData.length} finding(s)`;
+
+  // Group: repo → run_id → [findings]
+  const grouped = {};
+  for (const f of _findingsData) {
+    const repo   = f.repo   || "unknown";
+    const run_id = f.run_id || 0;
+    if (!grouped[repo])         grouped[repo] = {};
+    if (!grouped[repo][run_id]) grouped[repo][run_id] = [];
+    grouped[repo][run_id].push(f);
+  }
+
+  let html = "";
+  let fidCounter = 0;
+
+  for (const repo of Object.keys(grouped).sort()) {
+    const runs  = grouped[repo];
+    const total = Object.values(runs).reduce((s, fs) => s + fs.length, 0);
+    const repoId = `rg-${fidCounter++}`;
+
+    html += `
+      <div class="repo-group">
+        <div class="repo-header" onclick="toggleGroup('${repoId}')">
+          📁 ${esc(repo)}
+          <span class="count">${total} finding(s)</span>
+        </div>
+        <div id="${repoId}">
+    `;
+
+    for (const run_id of Object.keys(runs).sort()) {
+      const fs      = runs[run_id];
+      const runName = fs[0].run_name || `run #${run_id}`;
+      const runId   = `rg-${fidCounter++}`;
+
+      html += `
+        <div class="run-group">
+          <div class="run-header" onclick="toggleGroup('${runId}')">
+            ⚙ ${esc(runName)} <span style="color:var(--muted);font-weight:400">#${run_id}</span>
+            <span class="count">${fs.length} finding(s)</span>
+          </div>
+          <div class="finding-rows" id="${runId}">
+      `;
+
+      fs.forEach(f => {
+        const fid = `f-${fidCounter++}`;
+        _findingsMap[fid] = f;   // store reference — no JSON in HTML
+        html += `
+          <div class="finding-row" id="${fid}" data-fid="${fid}">
+            <span class="secret-type">${esc(f.secret_type || "—")}</span>
+            <span class="line">line ${f.line_number ?? "?"}</span>
+            <span class="step">${esc(f.step || "—")}</span>
+            <span class="matched">${esc(f.matched_text || "")}</span>
+          </div>
+        `;
+      });
+
+      html += `</div></div>`;
+    }
+
+    html += `</div></div>`;
+  }
+
+  tree.innerHTML = html;
+
+  // Attach click handlers after DOM is built
+  tree.querySelectorAll(".finding-row").forEach(row => {
+    row.addEventListener("click", () => selectFinding(row.dataset.fid));
+  });
+}
+
+function toggleGroup(id) {
+  const el = document.getElementById(id);
+  if (el) el.style.display = el.style.display === "none" ? "" : "none";
+}
+
+function selectFinding(fid) {
+  document.querySelectorAll(".finding-row").forEach(r => r.classList.remove("selected"));
+  document.getElementById(fid)?.classList.add("selected");
+
+  const f = _findingsMap[fid];
+  if (!f) return;
+
+  const detail = document.getElementById("finding-detail");
+  const grid   = document.getElementById("detail-grid");
+
+  const rows = [
+    ["Repository",              f.repo],
+    ["Run ID",                  f.run_id],
+    ["Run name",                f.run_name],
+    ...(f.step ? [["Step", f.step]] : []),
+    ["Line",                    f.line_number],
+    ["Secret type",             f.secret_type],
+    ["Matched text (redacted)", f.matched_text],
+  ];
+
+  grid.innerHTML = rows.map(([k, v]) =>
+    `<span class="key">${esc(k)}:</span><span class="value">${esc(String(v ?? ""))}</span>`
+  ).join("");
+
+  detail.classList.add("visible");
+}
+
+// ------------------------------------------------------------------
+// Status bar — poll /api/status every 3 seconds
+// ------------------------------------------------------------------
+
+function updateBadge(n) {
+  document.getElementById("findings-badge").textContent = `${n} finding${n === 1 ? "" : "s"}`;
+}
+
+let _lastFindingsCount = 0;
+
+async function pollStatus() {
+  try {
+    const s = await apiFetch("/api/status");
+    document.getElementById("status-msg").textContent = s.message || "Ready.";
+    const m   = Math.floor(s.seconds_until_poll / 60);
+    const sec = String(s.seconds_until_poll % 60).padStart(2, "0");
+    document.getElementById("countdown").textContent = `Next poll in ${m}:${sec}`;
+    updateBadge(s.findings_count);
+
+    // Auto-refresh findings whenever the count changes (regardless of active tab)
+    if (s.findings_count !== _lastFindingsCount) {
+      _lastFindingsCount = s.findings_count;
+      loadFindings();
+    }
+  } catch (_) { /* server may be starting up */ }
+}
+
+setInterval(pollStatus, 3000);
+
+// ------------------------------------------------------------------
+// Utilities
+// ------------------------------------------------------------------
+
+function esc(str) {
+  return String(str ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+async function apiFetch(url, options = {}) {
+  const res = await fetch(url, {
+    headers: { "Content-Type": "application/json", ...options.headers },
+    ...options,
+  });
+  if (!res.ok) {
+    let detail = `HTTP ${res.status}`;
+    try { detail = (await res.json()).detail || detail; } catch (_) {}
+    throw new Error(detail);
+  }
+  return res.json();
+}
+
+function setFeedback(el, msg, type) {
+  el.textContent = msg;
+  el.className   = `feedback ${type}`;
+}
+
+// ------------------------------------------------------------------
+// Init
+// ------------------------------------------------------------------
+
+loadConfig();
+pollStatus();
