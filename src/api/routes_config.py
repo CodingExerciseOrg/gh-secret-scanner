@@ -66,11 +66,15 @@ def make_router(registry, on_config_saved):
         method = body.auth_method
 
         if method == "token":
-            # Fall back to saved token if none submitted
+            # Only reuse a saved token when the previous config was also token auth.
+            # If the user is switching from app auth, the saved token is a cached
+            # installation token — silently reusing it would be incorrect.
             old_ident = identity.read_cookie_value(identity_cookie)
             saved_token = ""
             if old_ident:
-                saved_token = registry.get_storage(old_ident).load_config().get("token", "")
+                prev_cfg = registry.get_storage(old_ident).load_config()
+                if prev_cfg.get("auth_method", "token") == "token":
+                    saved_token = prev_cfg.get("token", "")
             token = body.token.strip() or saved_token.strip()
             if not token:
                 raise HTTPException(status_code=422, detail="An authentication token is required.")
