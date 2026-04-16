@@ -1,0 +1,174 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>GitHub Actions Secret Scanner</title>
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+
+  <!-- Header -->
+  <header>
+    <span>🔑</span>
+    <h1>GitHub Actions Secret Scanner</h1>
+    <span class="badge" id="findings-badge">0 findings</span>
+  </header>
+
+  <!-- Status bar -->
+  <div id="status-bar">
+    <span id="status-msg">Ready.</span>
+    <span id="countdown">—</span>
+  </div>
+
+  <!-- Tab navigation -->
+  <nav>
+    <button class="tab-btn active" data-tab="setup">⚙ Setup</button>
+    <button class="tab-btn"        data-tab="repos">📂 Repositories</button>
+    <button class="tab-btn"        data-tab="findings">🔑 Findings</button>
+  </nav>
+
+  <main>
+
+    <!-- ============================================================ -->
+    <!-- Setup tab                                                     -->
+    <!-- ============================================================ -->
+    <div id="panel-setup" class="panel active">
+      <div class="card">
+        <h2>GitHub Connection</h2>
+
+        <div class="form-row">
+          <label for="org">Organization</label>
+          <input type="text" id="org" placeholder="e.g. my-github-org" />
+        </div>
+
+        <div class="form-row">
+          <label>Auth method</label>
+          <div class="radio-group">
+            <label><input type="radio" name="auth_method" value="token" checked /> Personal Access Token</label>
+            <label><input type="radio" name="auth_method" value="app" /> GitHub App</label>
+          </div>
+        </div>
+
+        <!-- Token auth fields -->
+        <div id="row-token" class="form-row">
+          <label for="token">Token</label>
+          <input type="password" id="token" placeholder="ghp_…" autocomplete="off" />
+        </div>
+
+        <!-- GitHub App auth fields -->
+        <div id="section-app" style="display:none">
+          <div class="form-row">
+            <label for="app-id">App ID</label>
+            <input type="text" id="app-id" placeholder="e.g. 123456" autocomplete="off" />
+          </div>
+          <div class="form-row">
+            <label for="installation-id">Installation ID</label>
+            <input type="text" id="installation-id" placeholder="e.g. 78901234" autocomplete="off" />
+          </div>
+          <div class="form-row">
+            <label for="private-key">Private key</label>
+            <textarea id="private-key" rows="6"
+              placeholder="Paste PEM contents here:&#10;-----BEGIN RSA PRIVATE KEY-----&#10;...&#10;-----END RSA PRIVATE KEY-----&#10;&#10;Or enter a path to a .pem file on the server."
+              style="font-family:monospace;font-size:11px;width:100%;padding:8px;border:1px solid var(--border);border-radius:6px;resize:vertical;"
+              autocomplete="off"></textarea>
+          </div>
+          <div class="form-note" style="grid-column:1/-1;margin-top:-6px;">
+            The App ID and Installation ID are found in your GitHub App settings.
+            The installation token is refreshed automatically every 50 minutes.
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>Scanner mode</h2>
+
+        <div class="form-row">
+          <label for="scanner-mode">Mode</label>
+          <select id="scanner-mode">
+            <option value="mock">mock — built-in demo scanner (no binary required)</option>
+            <option value="test">test — run secret_scanner/secret_scanner.py</option>
+          </select>
+        </div>
+
+        <div class="form-row" id="row-scanner-path" style="display:none">
+          <label for="scanner-path">Scanner path</label>
+          <input type="text" id="scanner-path" placeholder="e.g. secret_scanner/secret_scanner.py (leave blank for default)" />
+        </div>
+        <div class="form-note" id="note-scanner-path" style="display:none">
+          Path to the scanner executable or .py script. Leave blank in test mode to use the default script.
+        </div>
+
+        <div class="action-row">
+          <button class="btn btn-primary" id="btn-save">Save &amp; connect</button>
+          <span class="feedback" id="setup-feedback"></span>
+        </div>
+      </div>
+    </div>
+
+    <!-- ============================================================ -->
+    <!-- Repositories tab                                              -->
+    <!-- ============================================================ -->
+    <div id="panel-repos" class="panel">
+      <div class="card">
+        <h2>
+          Repositories
+          <span id="repo-count" style="font-weight:400; color:var(--muted); font-size:13px; margin-left:8px;"></span>
+        </h2>
+
+        <div class="action-row" style="margin-bottom:16px">
+          <button class="btn btn-secondary" id="btn-refresh-repos">↻ Refresh</button>
+          <span id="repos-status" style="font-size:12px; color:var(--muted);"></span>
+        </div>
+
+        <div class="table-wrap">
+          <table id="repos-table">
+            <thead>
+              <tr>
+                <th data-col="name">Repository</th>
+                <th data-col="visibility">Visibility</th>
+                <th data-col="language">Language</th>
+                <th data-col="default_branch">Default branch</th>
+                <th data-col="updated_at">Last updated</th>
+              </tr>
+            </thead>
+            <tbody id="repos-body">
+              <tr><td colspan="5" class="empty-msg">No repositories loaded yet.</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- ============================================================ -->
+    <!-- Findings tab                                                  -->
+    <!-- ============================================================ -->
+    <div id="panel-findings" class="panel">
+      <div class="card">
+        <h2>
+          Secret Findings
+          <span id="findings-count" style="font-weight:400; color:var(--muted); font-size:13px; margin-left:8px;"></span>
+        </h2>
+
+        <div class="action-row" style="margin-bottom:16px">
+          <button class="btn btn-secondary" id="btn-refresh-findings">↻ Refresh</button>
+          <button class="btn btn-danger"  id="btn-dismiss-findings" title="Remove findings. Already-scanned runs won't be re-scanned.">🗑 Dismiss</button>
+          <button class="btn btn-warning" id="btn-reset-findings"   title="Clear findings and re-scan all runs from the beginning.">↺ Reset &amp; re-scan</button>
+        </div>
+
+        <div class="findings-wrap" id="findings-tree">
+          <p class="empty-msg">No findings yet. Run a scan to populate this view.</p>
+        </div>
+
+        <div id="finding-detail">
+          <h3>Selected finding</h3>
+          <div class="detail-grid" id="detail-grid"></div>
+        </div>
+      </div>
+    </div>
+
+  </main>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>
