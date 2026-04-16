@@ -29,7 +29,7 @@ gh-secret-scanner-web/
 │   ├── app.js                 ← fetch calls, tab switching, live status
 │   └── style.css              ← styling
 ├── secret_scanner/
-│   └── secret_scanner.py      ← standalone scanner binary
+│   └── secret_scanner.py      ← standalone test scanner (for tests only, not production ready)
 ├── config/
 │   ├── secret.key             ← server signing secret (auto-created)
 │   └── users/
@@ -66,7 +66,7 @@ You will need:
 - **Installation ID** — found in the URL after installing the App on your org (`/settings/installations/<id>`)
 - **Private key** — a `.pem` file generated from the App settings page
 
-The app generates and refreshes installation tokens automatically (tokens expire after 60 minutes; the app refreshes every 50 minutes).
+The app generates and refreshes installation tokens automatically (tokens expire after 60 minutes; tokens are refreshed automatically before expiry).
 
 ---
 
@@ -122,7 +122,7 @@ FastAPI auto-generates interactive API documentation at:
 4. Use the **Repositories tab** to see discovered repos.
 5. Use the **Findings tab** to see secrets found, grouped by repo and workflow run.
 
-The status bar shows the poller status and countdown to the next automatic scan (every 30 minutes by default, the value is set in `src/poller.py`).
+The status bar shows the poller status and countdown to the next automatic scan (every 30 minutes hardcoded, the interval is currently fixed at 30 minutes in src/poller.py`).
 
 ---
 
@@ -243,7 +243,7 @@ python -m PyInstaller --onefile secret_scanner.py
 # Output: secret_scanner/dist/secret_scanner
 ```
 
-The compiled binary can be used in `real` mode by setting `scanner_path` to the binary path in the Setup tab. Compilation is optional — `secret_scanner.py` works directly in `test` mode without it.
+The compiled binary can be used in `test` mode by setting `scanner_path` to the binary path in the Setup tab. Compilation is optional — `secret_scanner.py` works directly in `test` mode without it.
 
 ---
 
@@ -279,3 +279,28 @@ poller._poll_cycle()
 ```
 
 The subprocess boundary means `secret_scanner.py` is fully independent and could be replaced by any script or binary that accepts the same CLI interface and returns JSON.
+
+## Known limitations
+
+### 1. Per-identity server-side bookkeeping may remain after idle pollers are stopped
+
+When an identity becomes idle, its background poller is stopped after the configured timeout. However, some in-memory registry bookkeeping for that identity may remain until the application is restarted.
+
+Impact:
+- this does **not** affect the correctness of scans
+- this does **not** corrupt findings or configuration data
+- this does **not** keep polling active after the poller has been stopped
+- this mainly results in minor server-side memory/bookkeeping growth for previously used identities
+
+For the current exercise/demo scope, this limitation is acceptable.
+
+### 2. Previous identities may continue polling temporarily after the user switches identities
+
+When a user switches to another organization or credential set, the previously active identity is not stopped immediately. Instead, its background poller continues running until it becomes idle and is stopped by the poller timeout logic.
+
+Impact:
+- the previous identity may continue polling GitHub for a limited time
+- this can cause temporary overlap between old and new identity pollers
+- this may generate some extra background API calls and thread usage during that window
+
+For the current exercise/demo scope, this behavior is an intentional tradeoff and is acceptable.
