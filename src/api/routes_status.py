@@ -30,6 +30,8 @@ def make_router(registry, get_status_fn):
         ident = identity.read_cookie_value(identity_cookie)
         if not ident:
             return StatusOut(message="No config saved yet.", seconds_until_poll=0, findings_count=0)
+        # Keep the poller alive as long as a browser tab is open
+        registry.touch_identity(ident)
         return get_status_fn(ident)
 
     return router
