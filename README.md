@@ -182,7 +182,10 @@ Description=GitHub Actions Secret Scanner
 After=network.target
 
 [Service]
+
 WorkingDirectory=/opt/gh-secret-scanner-web
+User=gh-scanner
+Group=gh-scanner
 ExecStart=/usr/bin/python3 /opt/gh-secret-scanner-web/run.py
 Restart=always
 RestartSec=5
