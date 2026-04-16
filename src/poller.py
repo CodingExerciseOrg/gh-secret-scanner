@@ -16,7 +16,7 @@ from scanner import Scanner, ScannerError
 from storage import Storage
 
 
-POLL_INTERVAL_SECONDS = 5 * 60
+POLL_INTERVAL_SECONDS = 30 * 60
 
 
 class Poller(threading.Thread):
