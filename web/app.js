@@ -25,7 +25,11 @@ document.querySelectorAll(".tab-btn").forEach(btn => {
 // ------------------------------------------------------------------
 
 document.querySelectorAll("input[name='auth_method']").forEach(r => {
-  r.addEventListener("change", toggleAuthFields);
+  r.addEventListener("change", () => {
+    toggleAuthFields();
+    // Clear any leftover save feedback when the user switches auth method
+    setFeedback(document.getElementById("setup-feedback"), "", "");
+  });
 });
 
 function toggleAuthFields() {
@@ -411,7 +415,6 @@ function esc(str) {
 
 async function apiFetch(url, options = {}) {
   const res = await fetch(url, {
-    credentials: "include",
     headers: { "Content-Type": "application/json", ...options.headers },
     ...options,
   });
