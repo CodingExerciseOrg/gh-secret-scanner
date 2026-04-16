@@ -73,7 +73,10 @@ class Poller(threading.Thread):
 
     def run(self) -> None:
         while not self._stop_event.is_set():
-            self._poll_cycle()
+            try:
+                self._poll_cycle()
+            except Exception as e:
+                self._on_update(f"💥 Poller crashed unexpectedly: {e}. Will retry next cycle.")
             self._next_poll_at = time.time() + POLL_INTERVAL_SECONDS
 
             while not self._stop_event.is_set():
@@ -175,6 +178,6 @@ class Poller(threading.Thread):
             self._storage.append_findings(new_findings)
 
         self._on_update(
-            f"✅ Poll complete. {processed_count} new run(s) processed, "
+            f"Poll complete. {processed_count} new run(s) processed, "
             f"{len(new_findings)} finding(s) added."
         )
