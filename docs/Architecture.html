@@ -436,7 +436,7 @@ SHA-256(app_id|installation_id|private_key)[:16] — for App auth</code></pre>
 <div class="table-wrap"><table>
 <tr><th>Limitation</th><th>Detail</th></tr>
 <tr><td>No access control</td><td>Anyone who can reach the server URL can submit credentials and access findings. Add nginx HTTP Basic Auth if the server is public.</td></tr>
-<tr><td>Stale pollers</td><td>Pollers for old identities are not stopped when credentials change. They continue running until server restart. Old identity data folders remain on disk indefinitely.</td></tr>
+<tr><td>Stale pollers</td><td>Pollers for inactive identities are automatically stopped after ~1 hour of inactivity via a background reaper thread. However, identity data folders are not deleted and remain on disk indefinitely.</td></tr>
 <tr><td>PAT stored in plaintext</td><td>The token is stored in <code>config.json</code>. Restrict file permissions: <code>chmod 700 config/users/</code></td></tr>
 <tr><td>Private key stored in plaintext</td><td>Same as above. The PEM is stored as-is in <code>config.json</code>. Consider using a file path instead of pasting the key contents.</td></tr>
 <tr><td><code>secret.key</code> is critical</td><td>Losing <code>config/secret.key</code> invalidates all browser cookies. Users will need to re-enter their credentials. Back it up.</td></tr>
