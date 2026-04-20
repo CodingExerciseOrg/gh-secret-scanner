@@ -375,7 +375,7 @@ This hash:
 | Limitation | Detail |
 |-----------|--------|
 | No access control | Anyone who can reach the server URL can submit credentials and access findings. Add nginx HTTP Basic Auth if the server is public. |
-| Stale pollers | Pollers for old identities are not stopped when credentials change. They continue running until server restart. Old identity data folders remain on disk indefinitely. |
+| Stale pollers | Pollers for inactive identities are automatically stopped after ~1 hour of inactivity via a background reaper thread. However, identity data folders are not deleted and remain on disk indefinitely. |
 | PAT stored in plaintext | The token is stored in `config.json`. Restrict file permissions: `chmod 700 config/users/` |
 | Private key stored in plaintext | Same as above. The PEM is stored as-is in `config.json`. Consider using a file path instead of pasting the key contents. |
 | `secret.key` is critical | Losing `config/secret.key` invalidates all browser cookies. Users will need to re-enter their credentials. Back it up. |
