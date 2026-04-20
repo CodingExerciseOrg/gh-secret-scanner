@@ -97,7 +97,7 @@ class Poller(threading.Thread):
         org    = config.get("org", "").strip()
 
         if not org:
-            self._on_update("⚠ Poller skipped: no org configured.")
+            self._on_update(" Poller skipped: no org configured.")
             return
 
         try:
@@ -137,7 +137,7 @@ class Poller(threading.Thread):
                 try:
                     log_text = client.download_logs(org, repo_name, run_id)
                 except GitHubError as e:
-                    self._on_update(f"  ⚠ Log download failed: {e}")
+                    self._on_update(f"   Log download failed: {e}")
                     continue
 
                 if not log_text:
