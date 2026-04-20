@@ -76,7 +76,7 @@ class Poller(threading.Thread):
             try:
                 self._poll_cycle()
             except Exception as e:
-                self._on_update(f"💥 Poller crashed unexpectedly: {e}. Will retry next cycle.")
+                self._on_update(f" Poller crashed unexpectedly: {e}. Will retry next cycle.")
             self._next_poll_at = time.time() + POLL_INTERVAL_SECONDS
 
             while not self._stop_event.is_set():
@@ -103,15 +103,15 @@ class Poller(threading.Thread):
         try:
             client = make_client(self._storage)
         except GitHubError as e:
-            self._on_update(f"❌ Auth error: {e}")
+            self._on_update(f" Auth error: {e}")
             return
 
-        self._on_update(f"🔄 Polling {org} for new workflow runs…")
+        self._on_update(f" Polling {org} for new workflow runs…")
 
         try:
             repos = client.list_repos(org)
         except GitHubError as e:
-            self._on_update(f"❌ GitHub error: {e}")
+            self._on_update(f" GitHub error: {e}")
             return
 
         seen            = self._storage.load_seen_runs()
@@ -132,7 +132,7 @@ class Poller(threading.Thread):
                 if key in seen:
                     continue
 
-                self._on_update(f"🔍 Scanning {repo_name} run #{run_id}…")
+                self._on_update(f" Scanning {repo_name} run #{run_id}…")
 
                 try:
                     log_text = client.download_logs(org, repo_name, run_id)
@@ -160,7 +160,7 @@ class Poller(threading.Thread):
                         run_name=run.get("name", ""),
                     )
                 except ScannerError as e:
-                    self._on_update(f"  ⚠ Scanner error: {e}")
+                    self._on_update(f"   Scanner error: {e}")
                     continue
 
                 seen.add(key)
@@ -170,7 +170,7 @@ class Poller(threading.Thread):
                 if findings:
                     new_findings.extend(findings)
                     self._on_update(
-                        f"  ⚠ {len(findings)} finding(s) in {repo_name} run #{run_id}"
+                        f"   {len(findings)} finding(s) in {repo_name} run #{run_id}"
                     )
 
         self._storage.save_seen_runs(seen)
