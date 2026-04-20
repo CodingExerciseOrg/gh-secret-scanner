@@ -1,1 +1,1 @@
-Attached documentation files (.md. .html and .pdf)
+Attached documentation files (.md and .html)
